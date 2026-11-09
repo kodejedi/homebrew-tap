@@ -32,17 +32,22 @@ case "$arch" in
 	*) die "unsupported architecture: $arch (builds exist for amd64 and arm64)" ;;
 esac
 
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+trap 'exit 1' INT TERM
+
 say "Resolving the latest $BIN release from $REPO"
-tag=$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" |
-	sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -n 1)
+# Keep curl outside a pipeline: /bin/sh does not portably support pipefail.
+curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" -o "$tmp/release.json"
+tag=$(sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' "$tmp/release.json")
 case "$tag" in
 	v*) ;;
 	*) die "no release found in $REPO yet" ;;
 esac
 version=${tag#v}
-
-tmp=$(mktemp -d)
-trap 'rm -rf "$tmp"' EXIT INT TERM
+case "$version" in
+	'' | *[!0-9A-Za-z.+-]*) die "invalid release tag: $tag" ;;
+esac
 
 tarball="${BIN}_${version}_${os}_${arch}.tar.gz"
 base="https://github.com/$REPO/releases/download/$tag"
@@ -57,7 +62,7 @@ if command -v cosign >/dev/null 2>&1; then
 	cosign verify-blob \
 		--bundle "$tmp/checksums.txt.bundle" \
 		--certificate-oidc-issuer https://token.actions.githubusercontent.com \
-		--certificate-identity-regexp "https://github.com/kodejedi/attestbox/" \
+		--certificate-identity "https://github.com/kodejedi/attestbox/.github/workflows/release-cli.yml@refs/tags/$tag" \
 		"$tmp/checksums.txt" >/dev/null
 	say "Signature verified (cosign keyless)"
 else
@@ -66,10 +71,13 @@ fi
 
 (
 	cd "$tmp"
+	# Select the exact archive name, without treating version dots as regexes.
+	awk -v file="$tarball" '$2 == file { print }' checksums.txt > archive.checksum
+	[ -s archive.checksum ] || die "no checksum found for $tarball"
 	if command -v sha256sum >/dev/null 2>&1; then
-		grep "  $tarball\$" checksums.txt | sha256sum -c - >/dev/null
+		sha256sum -c archive.checksum >/dev/null
 	elif command -v shasum >/dev/null 2>&1; then
-		grep "  $tarball\$" checksums.txt | shasum -a 256 -c - >/dev/null
+		shasum -a 256 -c archive.checksum >/dev/null
 	else
 		die "neither sha256sum nor shasum is installed; cannot verify the download"
 	fi
