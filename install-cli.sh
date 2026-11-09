@@ -53,11 +53,9 @@ curl -fsSL "$base/checksums.txt" -o "$tmp/checksums.txt"
 # on the checksum file. Absence of cosign is not a failure; the checksum
 # below still comes over TLS from the release.
 if command -v cosign >/dev/null 2>&1; then
-	curl -fsSL "$base/checksums.txt.sig" -o "$tmp/checksums.txt.sig"
-	curl -fsSL "$base/checksums.txt.pem" -o "$tmp/checksums.txt.pem"
+	curl -fsSL "$base/checksums.txt.bundle" -o "$tmp/checksums.txt.bundle"
 	cosign verify-blob \
-		--signature "$tmp/checksums.txt.sig" \
-		--certificate "$tmp/checksums.txt.pem" \
+		--bundle "$tmp/checksums.txt.bundle" \
 		--certificate-oidc-issuer https://token.actions.githubusercontent.com \
 		--certificate-identity-regexp "https://github.com/kodejedi/attestbox/" \
 		"$tmp/checksums.txt" >/dev/null
